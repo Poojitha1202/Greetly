@@ -1,0 +1,435 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Set up EC2 instances to run Docker containers for a React frontend and a Flask backend, along with an API Gateway setup.
+
+Parameters:
+  InstanceType:
+    Description: EC2 instance type.
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+    ConstraintDescription: Must select a valid instance type.
+
+  LabRoleARN:
+    Description: ARN of the IAM Role for Lambda functions
+    Type: String
+    Default: arn:aws:iam::498038081978:role/LabRole
+
+Resources:
+  GreetlyUserRegistrationTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: GreetlyUserRegistrationTable
+      AttributeDefinitions:
+        - AttributeName: Email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Email
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  GreetlyCardletMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: GreetlyCardletMetadataTable
+      AttributeDefinitions:
+        - AttributeName: cardletId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: cardletId
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  TextractBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: greetly-textract
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  TextractImageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TextractBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: Policy1690593188769
+        Statement:
+          - Sid: Stmt1690593188769
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: !Join ["", ["arn:aws:s3:::greetly-textract/*"]]
+
+  GreetlyBackendIpBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: greetly-backend-ip
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  GreetlyBackendIpBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref GreetlyBackendIpBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: Policy1690593188769
+        Statement:
+          - Sid: Stmt1690593188769
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: !Join ["", ["arn:aws:s3:::greetly-backend-ip/*"]]
+
+  BackEndEC2Instance:
+    Type: "AWS::EC2::Instance"
+    DependsOn:
+      - GreetlyBackendIpBucket
+      - GreetlyCardletMetadataTable
+      - GreetlyUserRegistrationTable
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}"
+      IamInstanceProfile: LabInstanceProfile
+      Tags:
+        - Key: Name
+          Value: BackEndEC2Instance
+      SecurityGroups:
+        - !Ref BackendSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y docker
+          service docker start
+          sleep 10
+          usermod -a -G docker ec2-user
+          docker login --username pooj12 --password 12Feb2001!
+          docker pull pooj12/greetlybackend:latest
+          docker run -d -p 7000:7000 pooj12/greetlybackend:latest
+          BACKEND_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4) 
+          echo "$BACKEND_IP" > /tmp/greetly-backend-ip.txt
+          yum install -y aws-cli
+          aws s3 cp /tmp/greetly-backend-ip.txt s3://greetly-backend-ip/greetly-backend-ip.txt
+
+  BackendSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Allow HTTP and SSH access to the backend instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 7000
+          ToPort: 7000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  FrontEndEC2Instance:
+    Type: "AWS::EC2::Instance"
+    DependsOn:
+      - GreetlyBackendIpBucket
+      - BackEndEC2Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2:1}}"
+      IamInstanceProfile: LabInstanceProfile
+      Tags:
+        - Key: Name
+          Value: FrontEndEC2Instance
+      SecurityGroups:
+        - !Ref FrontendSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update -y
+          sudo yum install -y docker
+          service docker start
+          sleep 30
+          usermod -a -G docker ec2-user
+          sudo yum install -y aws-cli
+          PRE_SIGNED_URL=$(aws s3 presign s3://greetly-backend-ip/greetly-backend-ip.txt --expires-in 9000)
+          curl -o greetly-backend-ip.txt "$PRE_SIGNED_URL"
+          BACKEND_IP=$(cat greetly-backend-ip.txt)
+          export REACT_APP_BACKEND_IP=$BACKEND_IP
+          docker login --username pooj12 --password 12Feb2001!
+          docker pull pooj12/greetlyfrontend:latest
+          docker run -d -p 3000:3000 -e REACT_APP_BACKEND_IP=$BACKEND_IP pooj12/greetlyfrontend:latest
+
+  FrontendSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Allow HTTP and SSH access to the frontend instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  CardletDeliveryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CardletDeliveryLambda
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          # Initialize logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Initialize AWS SDK clients
+          dynamodb = boto3.resource('dynamodb')
+          s3 = boto3.client('s3')
+          sns = boto3.client('sns')
+          lambda_client = boto3.client('lambda')
+
+          # DynamoDB table name - replace with your actual table name
+          CARDLET_METADATA_TABLE = 'GreetlyCardletMetadataTable'
+          S3_BUCKET_NAME = 'greetly-textract'
+
+          def get_cardlet_metadata(cardlet_id):
+              table = dynamodb.Table(CARDLET_METADATA_TABLE)
+              try:
+                  response = table.get_item(Key={'cardletId': cardlet_id})
+                  if 'Item' in response:
+                      return response['Item']
+                  else:
+                      logger.info(f"No data found for cardletId: {cardlet_id}")
+                      return None
+              except Exception as e:
+                  logger.error(f"Error retrieving cardlet metadata: {e}")
+                  return None
+
+          def send_notification(topic_arn, message):
+              try:
+                  response = sns.publish(
+                      TopicArn=topic_arn,
+                      Message=message,
+                      Subject='Your Greetly Cardlet is Ready!'
+                  )
+                  return response
+              except Exception as e:
+                  logger.error(f"Error sending SNS notification: {e}")
+                  return None
+
+          def lambda_handler(event, context):
+              cardlet_id = event['cardletId']
+
+              metadata = get_cardlet_metadata(cardlet_id)
+              if not metadata:
+                  return {'statusCode': 404, 'body': 'Metadata not found'}
+
+              wishes = metadata.get('wishes', '')
+              extracted_text = metadata.get('extractedText', '')
+              message = f"Hello! Here are your wishes: {wishes}. Extracted text: {extracted_text}"
+
+              sns_response = send_notification(metadata['snsTopicArn'], message)
+              if not sns_response:
+                  return {'statusCode': 500, 'body': 'Failed to send notification'}
+
+              return {'statusCode': 200, 'body': 'Cardlet delivered successfully'}
+
+      Role: !Sub "${LabRoleARN}"
+
+  DeliverySchedulingLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DeliverySchedulingLambda
+      Handler: index.lambda_handler
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          from datetime import datetime, timedelta
+
+          # Initialize logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Initialize AWS SDK clients
+          eventbridge = boto3.client('events')
+          lambda_client = boto3.client('lambda')
+
+          # Define the time difference for Halifax
+          HALIFAX_TIME_DIFFERENCE_HOURS = -3
+
+          def lambda_handler(event, context):
+              processed_records = []
+              region = context.invoked_function_arn.split(":")[3]
+              account_id = context.invoked_function_arn.split(":")[4]
+              
+              for record in event['Records']:
+                  if record['eventName'] == 'INSERT':
+                      new_image = record['dynamodb']['NewImage']
+                      
+                      cardlet_id = new_image['cardletId']['S']
+                      delivery_date = new_image['deliveryDate']['S']
+                      user_id = new_image['email']['S']
+
+                      # Convert delivery date to a cron expression for scheduling
+                      cron_expression = convert_date_to_cron(delivery_date)
+
+                      rule_name = f'CardletDelivery-{cardlet_id}'
+                      rule_arn = f'arn:aws:events:{region}:{account_id}:rule/{rule_name}'
+                      try:
+                          # Create the EventBridge rule to trigger on the specified date
+                          eventbridge.put_rule(
+                              Name=rule_name,
+                              ScheduleExpression=cron_expression,
+                              State='ENABLED',
+                              Description=f'Schedule delivery of cardlet {cardlet_id} to {user_id}'
+                          )
+                          
+                          # Define the target Lambda function that will handle the delivery
+                          target_arn = 'arn:aws:lambda:us-east-1:498038081978:function:CardletDeliveryLambda'
+                          
+                          # Set the target for the rule
+                          eventbridge.put_targets(
+                              Rule=rule_name,
+                              Targets=[{
+                                  'Id': f'TargetFor-{cardlet_id}',
+                                  'Arn': target_arn,
+                                  'Input': json.dumps({
+                                      'cardletId': cardlet_id,
+                                  })
+                              }]
+                          )
+
+                          # Add permissions for the EventBridge to invoke the Lambda function
+                          add_invoke_permission(target_arn, rule_arn)
+
+                          processed_records.append({
+                              'cardletId': cardlet_id,
+                              'ruleName': rule_name,
+                              'status': 'Success'
+                          })
+                          
+                          logger.info(f"Rule created: {rule_name} for cardlet {cardlet_id}")
+
+                      except Exception as e:
+                          logger.error(f"Error in rule creation for cardlet {cardlet_id}: {e}")
+                          processed_records.append({
+                              'cardletId': cardlet_id,
+                              'ruleName': rule_name,
+                              'status': 'Error',
+                              'error': str(e)
+                          })
+
+              return {
+                  'processedRecords': processed_records
+              }
+
+          def add_invoke_permission(lambda_arn, rule_arn):
+              try:
+                  rule_name_part = rule_arn.split('/')[-1]
+                  statement_id = f"EventBridgeInvoke-{rule_name_part}".replace('/', '-').replace(':', '-')
+                  lambda_client.add_permission(
+                      FunctionName=lambda_arn,
+                      StatementId=statement_id,
+                      Action='lambda:InvokeFunction',
+                      Principal='events.amazonaws.com',
+                      SourceArn=rule_arn
+                  )
+                  logger.info(f"Permission added for {lambda_arn} with {rule_arn}")
+              except lambda_client.exceptions.ResourceConflictException:
+                  logger.info(f"Permission already exists for {lambda_arn} with {rule_arn}")
+              except Exception as e:
+                  logger.error(f"Error in adding permission for {lambda_arn}: {e}")
+
+          def convert_date_to_cron(delivery_date):
+              date_time_obj = datetime.fromisoformat(delivery_date)
+              adjusted_date_time_obj = date_time_obj + timedelta(hours=3)
+              year, month, day, hour, minute = adjusted_date_time_obj.year, adjusted_date_time_obj.month, adjusted_date_time_obj.day, adjusted_date_time_obj.hour, adjusted_date_time_obj.minute
+              cron_expression = f'cron({minute} {hour} {day} {month} ? {year})'
+              return cron_expression
+      Role: !Sub ${LabRoleARN}
+
+  GreetlyCardletMetadataTableEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      EventSourceArn: !GetAtt GreetlyCardletMetadataTable.StreamArn
+      FunctionName: DeliverySchedulingLambda
+      StartingPosition: LATEST
+
+Outputs:
+  GreetlyUserRegistrationTableArn:
+    Description: ARN of the Greetly User Registration DynamoDB table
+    Value: !GetAtt GreetlyUserRegistrationTable.Arn
+
+  GreetlyCardletMetadataTableArn:
+    Description: ARN of the Greetly Cardlet Metadata DynamoDB table
+    Value: !GetAtt GreetlyCardletMetadataTable.Arn
+
+  GreetlyBackendIpBucketName:
+    Description: Name of the S3 Bucket for Backend IP Storage
+    Value: !Ref GreetlyBackendIpBucket
+
+  TextractImageBucketName:
+    Description: Name of the S3 Bucket for Textract Image Storage
+    Value: !Ref TextractBucket
+    Export:
+      Name: TextractBucketName
+
+  BackendInstanceIP:
+    Description: Public IP of the Backend EC2 instance.
+    Value: !GetAtt BackEndEC2Instance.PublicIp
+
+  FrontendInstanceIP:
+    Description: Public IP of the Frontend EC2 instance.
+    Value: !GetAtt FrontEndEC2Instance.PublicIp
+
+  CardletDeliveryLambdaArn:
+    Description: ARN of the Cardlet Delivery Lambda function
+    Value: !GetAtt CardletDeliveryLambda.Arn
+
+  ScheduledLambdaArn:
+    Description: ARN of the Delivery Scheduling Lambda function
+    Value: !GetAtt CardletDeliveryLambda.Arn

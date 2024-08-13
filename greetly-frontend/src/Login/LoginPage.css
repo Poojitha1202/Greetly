@@ -1,0 +1,164 @@
+/* src/LoginPage.css */
+
+body {
+  font-family: "Arial", sans-serif;
+  background-color: #e5d2dc;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  margin: 0;
+}
+
+.login-card-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 75vh;
+}
+
+.login-card {
+  display: flex;
+  width: 900px;
+  height: 500px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.login-card-left {
+  flex: 1;
+  background-color: #fff;
+  padding: 40px 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.login-card-right {
+  flex: 1;
+  background-color: #d9e4dd;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login-card-right .login-card-image img {
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+.login-card-right .login-card-text {
+  text-align: center;
+  margin-top: 20px;
+}
+
+.login-card-right .login-card-text h3 {
+  margin: 0;
+  font-size: 24px;
+  color: #333;
+}
+
+.login-card-right .login-card-text p {
+  color: #777;
+  margin-top: 10px;
+}
+
+.login-card-left h2 {
+  margin: 0;
+  margin-bottom: 30px;
+  font-size: 28px;
+  color: #333;
+  text-align: center;
+}
+
+.form-group {
+  margin-top: 10px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: px;
+  font-weight: bold;
+}
+
+.form-group input {
+  width: 90%;
+  max-width: 400px;
+  padding: 10px;
+  border: 1px solid #dabdd5;
+  border-radius: 5px;
+  margin-top: 5px;
+  margin-bottom: auto;
+}
+
+.form-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  margin-top: 25px;
+}
+
+.submit-button {
+  background-color: #d59fcc;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 100%;
+  max-width: 300px;
+}
+
+.submit-button:hover {
+  background-color: #d28dc7;
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 20px 10px;
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.or-divider span {
+  padding: 0 10px;
+  color: #777;
+}
+
+.google-signin {
+  background-color: #d59fcc;
+  font-size: 13.5px;
+  color: white;
+  border: none;
+  margin: auto;
+  padding: 10px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 65%;
+  max-width: 300px;
+  margin-top: 10px;
+  margin-right: auto;
+  text-decoration: none;
+}
+
+.create-account {
+  margin-bottom: auto;
+  text-align: center;
+}
+
+.create-account a {
+  color: #333;
+  text-decoration: none;
+  font-weight: bold;
+}
